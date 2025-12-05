@@ -43,6 +43,24 @@ HTML_TEMPLATE = '''
 </html>
 '''
 
+USER_TEMPLATE = '''
+<!DOCTYPE html>
+<html>
+<head>
+    <title>User Info</title>
+</head>
+<body>
+    <h2>Get User Information</h2>
+    <form method="GET" action="/user">
+        User ID: <input type="text" name="id" value="{{ user_id }}">
+        <input type="submit" value="Get Info">
+    </form>
+       
+    {{ message|safe }}
+</body>
+</html>
+'''
+
 def db_query(query, params=(), fetch=False, fetchone=False):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -155,12 +173,10 @@ def get_client_ip():
 
 
 def handle_unlock_account(account_username):
-    """Исправлено: убрано условие, которое всегда true"""
     unlock_account(account_username)
     return f'<p style="color: green"> Account {account_username} unlocked!</p>'
 
 def handle_unlock_ip(ip_address):
-    """Исправлено: убрано условие, которое всегда true"""
     unlock_ip(ip_address)
     return f'<p style="color: green"> IP {ip_address} unlocked!</p>'
 
@@ -227,6 +243,30 @@ def handle_login_process(username, password, client_ip, ip_count, first_ip_attem
         attempts = get_failed_attempts(username) + 1
         return process_failed_login(username, client_ip, attempts)
 
+@app.route('/user')
+def user_info():
+    user_id = request.args.get('id', '').strip()
+    message = ""
+    
+    if user_id:
+        if not user_id.isdigit():
+            message = f'<p>Error: ID must be a number</p>'
+        else:
+            user = db_query("SELECT username FROM users WHERE rowid=?", (int(user_id),), fetchone=True)
+            
+            if user:
+                message = f'''
+                <h3>User Found:</h3>
+                <p>ID: {user_id}</p>
+                <p>Username: {user[0]}</p>
+                '''
+            else:
+                message = f'<p>User with ID {user_id} not found</p>'
+    else:
+        message = '<p>Enter a User ID to get information</p>'
+    
+    return render_template_string(USER_TEMPLATE, user_id=user_id, message=message)
+
 @app.route('/auth/')
 def login():
     username = request.args.get('username', '').strip()
@@ -260,6 +300,7 @@ def login():
         message = handle_login_process(username, password, client_ip, ip_count, first_ip_attempt)
 
     return render_template_string(HTML_TEMPLATE, message=message)
+
 
 if __name__ == '__main__':
     init_db()
