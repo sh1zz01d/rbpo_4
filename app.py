@@ -250,7 +250,7 @@ def user_info():
     
     if user_id:
         if not user_id.isdigit():
-            message = f'<p>Error: ID must be a number</p>'
+            message = '<p>Error: ID must be a number</p>'
         else:
             user = db_query("SELECT username FROM users WHERE rowid=?", (int(user_id),), fetchone=True)
             
