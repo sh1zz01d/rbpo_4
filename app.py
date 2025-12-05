@@ -174,7 +174,7 @@ def handle_show_status():
     message += '</div>'
     return message
 
-def is_ip_blocked(client_ip, username, ip_count, first_ip_attempt):
+def is_ip_blocked(ip_count, first_ip_attempt):
     return time.time() - first_ip_attempt < 300 and ip_count >= 5
 
 def update_ip_counter(client_ip, ip_count, first_ip_attempt):
@@ -249,7 +249,7 @@ def login():
         return render_template_string(HTML_TEMPLATE, message=message)
 
     ip_count, first_ip_attempt = get_ip_attempts(client_ip)
-    if is_ip_blocked(client_ip, username, ip_count, first_ip_attempt):
+    if is_ip_blocked(ip_count, first_ip_attempt):
         log_event("IP_BLOCKED", username, client_ip, f"attempts={ip_count}")
         message = '<pre><br />Login failed: IP address temporarily blocked (too many attempts)</pre>'
         return render_template_string(HTML_TEMPLATE, message=message)
