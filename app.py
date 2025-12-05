@@ -153,6 +153,54 @@ def get_system_status():
 def get_client_ip():
     return request.remote_addr
 
+def handle_unlock_account(account_username):
+    if unlock_account(account_username):
+        return f'<p style="color: green"> Account {account_username} unlocked!</p>'
+    return ''
+
+def handle_unlock_ip(ip_address):
+    if unlock_ip(ip_address):
+        return f'<p style="color: green"> IP {ip_address} unlocked!</p>'
+    return ''
+
+def handle_show_status():
+    status = get_system_status()
+    message = '<div style="background: #f5f5f5; padding: 10px; border-radius: 5px;">'
+    message += '<h4>System Status:</h4>'
+    message += f'<p><strong>Locked accounts:</strong> {", ".join(status["locked_accounts"]) or "None"}</p>'
+    message += f'<p><strong>Active IPs:</strong> {", ".join(status["active_ips"]) or "None"}</p>'
+    message += f'<p><strong>Failed attempts:</strong> {status["failed_attempts"]}</p>'
+    message += '</div>'
+    return message
+
+def check_ip_blocked(client_ip, username, ip_count, first_ip_attempt):
+    time_window = 300
+    if time.time() - first_ip_attempt < time_window and ip_count >= 5:
+        log_event("IP_BLOCKED", username, client_ip, f"attempts={ip_count}")
+        return '<pre><br />Login failed: IP address temporarily blocked (too many attempts)</pre>'
+    return None
+
+def handle_successful_login(username, client_ip):
+    set_failed_attempts(username, 0)
+    set_ip_attempts(client_ip, 0)
+    log_event("LOGIN_SUCCESS", username, client_ip)
+    message = f'<p>Welcome to the password protected area {username}</p>'
+    message += '<p>Login successful!</p>'
+    return message
+
+def handle_failed_login(username, client_ip, attempts):
+    set_failed_attempts(username, attempts)
+    if attempts >= 3:
+        lock_time = 300 if attempts == 3 else 1800
+        set_account_lock(username, time.time() + lock_time)
+        log_event("ACCOUNT_BLOCKED", username, client_ip, f"attempts={attempts}, lock_time={lock_time}s")
+        return f'<pre><br />Login failed: Incorrect credentials (account locked for {lock_time} seconds)</pre>'
+    else:
+        remaining_attempts = 3 - attempts
+        log_event("LOGIN_FAILED", username, client_ip, f"attempt={attempts}/3")
+        return f'<pre><br />Login failed: Incorrect credentials ({remaining_attempts} attempts remaining before lock)</pre>'
+
+
 @app.route('/auth/')
 def login():
     username = request.args.get('username', '').strip()
@@ -163,71 +211,54 @@ def login():
     message = ""
 
     if 'unlock_account' in request.args and account_username:
-        if unlock_account(account_username):
-            message = f'<p style="color: green"> Account {account_username} unlocked!</p>'
+        message = handle_unlock_account(account_username)
         return render_template_string(HTML_TEMPLATE, message=message)
 
     if 'unlock_ip' in request.args and ip_address:
-        if unlock_ip(ip_address):
-            message = f'<p style="color: green"> IP {ip_address} unlocked!</p>'
+        message = handle_unlock_ip(ip_address)
         return render_template_string(HTML_TEMPLATE, message=message)
 
     if 'show_status' in request.args:
-        status = get_system_status()
-        message = '<div style="background: #f5f5f5; padding: 10px; border-radius: 5px;">'
-        message += '<h4>System Status:</h4>'
-        message += f'<p><strong>Locked accounts:</strong> {", ".join(status["locked_accounts"]) or "None"}</p>'
-        message += f'<p><strong>Active IPs:</strong> {", ".join(status["active_ips"]) or "None"}</p>'
-        message += f'<p><strong>Failed attempts:</strong> {status["failed_attempts"]}</p>'
-        message += '</div>'
+        message = handle_show_status()
         return render_template_string(HTML_TEMPLATE, message=message)
 
     ip_count, first_ip_attempt = get_ip_attempts(client_ip)
-    time_window = 300
+    ip_blocked = check_ip_blocked(client_ip, username, ip_count, first_ip_attempt)
+    if ip_blocked:
+        return render_template_string(HTML_TEMPLATE, message=ip_blocked)
 
-    if time.time() - first_ip_attempt < time_window and ip_count >= 5:
-        log_event("IP_BLOCKED", username, client_ip, f"attempts={ip_count}")
-        message = '<pre><br />Login failed: IP address temporarily blocked (too many attempts)</pre>'
-        return render_template_string(HTML_TEMPLATE, message=message)
 
     time.sleep(3)
 
     if 'Login' in request.args:
-        if time.time() - first_ip_attempt > time_window:
+        if time.time() - first_ip_attempt > 300:
             set_ip_attempts(client_ip, 1)
             ip_count = 1
         else:
             set_ip_attempts(client_ip, ip_count + 1, first_ip_attempt)
             ip_count += 1
 
+
         lock_until = get_account_lock(username)
         if lock_until and time.time() < lock_until:
             remaining = int(lock_until - time.time())
             log_event("LOGIN_FAILED", username, client_ip, f"account_locked({remaining}s)")
             message = f'<pre><br />Login failed: Account temporarily locked ({remaining} seconds remaining)</pre>'
+            return render_template_string(HTML_TEMPLATE, message=message)
+
+
+        set_account_lock(username, None)
+        
+
+        stored_pw = get_user_password(username)
+        if stored_pw and stored_pw == password:
+            message = handle_successful_login(username, client_ip)
         else:
-            set_account_lock(username, None)
-            stored_pw = get_user_password(username)
-            if stored_pw and stored_pw == password:
-                set_failed_attempts(username, 0)
-                set_ip_attempts(client_ip, 0)
-                log_event("LOGIN_SUCCESS", username, client_ip)
-                message = f'<p>Welcome to the password protected area {username}</p>'
-                message += '<p>Login successful!</p>'
-            else:
-                attempts = get_failed_attempts(username) + 1
-                set_failed_attempts(username, attempts)
-                if attempts >= 3:
-                    lock_time = 300 if attempts == 3 else 1800
-                    set_account_lock(username, time.time() + lock_time)
-                    log_event("ACCOUNT_BLOCKED", username, client_ip, f"attempts={attempts}, lock_time={lock_time}s")
-                    message = f'<pre><br />Login failed: Incorrect credentials (account locked for {lock_time} seconds)</pre>'
-                else:
-                    remaining_attempts = 3 - attempts
-                    log_event("LOGIN_FAILED", username, client_ip, f"attempt={attempts}/3")
-                    message = f'<pre><br />Login failed: Incorrect credentials ({remaining_attempts} attempts remaining before lock)</pre>'
+            attempts = get_failed_attempts(username) + 1
+            message = handle_failed_login(username, client_ip, attempts)
 
     return render_template_string(HTML_TEMPLATE, message=message)
+
 
 
 if __name__ == '__main__':
